@@ -65,6 +65,7 @@ defmodule EMQXUmbrella.MixProject do
     common_deps() ++
       quicer_dep() ++
       jq_dep() ++
+      bcrypt_dep() ++
       extra_release_apps() ++
       overridden_deps()
   end
@@ -117,7 +118,6 @@ defmodule EMQXUmbrella.MixProject do
       common_dep(:hackney),
       # set by hackney (dependency)
       {:ssl_verify_fun, "1.1.7", override: true},
-      common_dep(:bcrypt),
       common_dep(:uuid),
       {:quickrand,
        github: "okeuday/quickrand", tag: "v2.0.7.1", manager: :rebar3, override: true},
@@ -588,6 +588,7 @@ defmodule EMQXUmbrella.MixProject do
     [
       quicer: enable_quicer?(),
       jq: enable_jq?(),
+      bcrypt: enable_bcrypt?(),
       observer: has_app?(:observer),
       mnesia_rocksdb: enable_rocksdb?()
     ]
@@ -822,6 +823,17 @@ defmodule EMQXUmbrella.MixProject do
 
     File.chmod!(Path.join(bin, "node_dump"), 0o755)
 
+    # Windows launchers.  They are templates (they interpolate the release
+    # version and the ERTS version), so they go through render_template/3
+    # rather than being copied verbatim.
+    for name <- ["emqx.cmd", "emqx_ctl.cmd"] do
+      render_template(
+        Path.join("bin", name),
+        assigns,
+        Path.join(bin, name)
+      )
+    end
+
     Mix.Generator.copy_file(
       "bin/emqx_cluster_rescue",
       Path.join(bin, "emqx_cluster_rescue"),
@@ -959,7 +971,9 @@ defmodule EMQXUmbrella.MixProject do
         "data",
         "plugins",
         "log",
-        "bin/node_dump"
+        "bin/node_dump",
+        "bin/emqx.cmd",
+        "bin/emqx_ctl.cmd"
         | &1
       ]
     )
@@ -1026,9 +1040,11 @@ defmodule EMQXUmbrella.MixProject do
     |> Path.wildcard()
     |> Enum.each(&File.rm_rf!/1)
 
-    ## Windows is not a supported platform, so the launchers mix generates for it
-    ## are dead weight. remote.vm.args goes with them: bin/emqx.bat was its only
-    ## reader, so once that is gone nothing in the release opens it.
+    ## The launchers mix generates for Windows are dead weight: EMQX ships its
+    ## own bin/emqx.cmd, and mix's bin/emqx.bat would shadow it, because .BAT
+    ## precedes .CMD in the default PATHEXT. remote.vm.args goes with them:
+    ## bin/emqx.bat was its only reader, so once that is gone nothing in the
+    ## release opens it.
     [
       [release.path, "bin", "emqx.bat"],
       [release.version_path, "env.bat"],
@@ -1195,6 +1211,29 @@ defmodule EMQXUmbrella.MixProject do
     end
   end
 
+  @doc """
+  bcrypt's NIF is POSIX-only: its C sources want sys/queue.h, err.h, unistd.h
+  and pthreads, none of which MSVC provides (and mingw-w64 ships neither
+  sys/queue.h nor err.h). emqx_machine_boot already lists :bcrypt in
+  ?OPTIONAL_APPS, so a release without it boots; only `bcrypt` as a
+  password_hash_algorithm becomes unavailable.
+  """
+  def bcrypt_dep() do
+    if enable_bcrypt?(),
+      do: [common_dep(:bcrypt)],
+      else: []
+  end
+
+  def enable_bcrypt?() do
+    not build_without_bcrypt?()
+  end
+
+  def build_without_bcrypt?() do
+    opt = System.get_env("BUILD_WITHOUT_BCRYPT", "false")
+
+    String.downcase(opt) != "false"
+  end
+
   defp enable_jq?() do
     not Enum.any?([
       build_without_jq?()
@@ -1211,7 +1250,20 @@ defmodule EMQXUmbrella.MixProject do
   end
 
   def build_without_rocksdb?() do
-    "1" == System.get_env("BUILD_WITHOUT_ROCKSDB")
+    opt = System.get_env("BUILD_WITHOUT_ROCKSDB", "false")
+
+    String.downcase(opt) != "false"
+  end
+
+  @doc """
+  True when the release is being assembled on a Windows host.
+
+  Windows has no RocksDB and no quicer build, so `build` exports
+  BUILD_WITHOUT_ROCKSDB / BUILD_WITHOUT_QUIC there; this helper is for the
+  release steps that need to branch on the host itself.
+  """
+  def windows?() do
+    match?({:win32, _}, :os.type())
   end
 
   def get_emqx_flavor() do

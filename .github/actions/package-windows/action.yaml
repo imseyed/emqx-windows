@@ -1,0 +1,67 @@
+name: 'Create Windows packages'
+description: 'Build Windows packages'
+inputs:
+  profile: # emqx-enterprise
+    required: false
+    default: emqx-enterprise
+  otp:
+    required: true
+  elixir:
+    required: true
+
+runs:
+  using: composite
+  ## NOTE: third-party actions are referenced by tag here. This repo pins
+  ## them to commit SHAs; run scripts/bump-actions-versions.sh before merging
+  ## so these match the convention used by the other workflows.
+  steps:
+    - uses: erlef/setup-beam@v1
+      with:
+        otp-version: ${{ inputs.otp }}
+        elixir-version: ${{ inputs.elixir }}
+        install-rebar: false
+        install-hex: false
+    - uses: msys2/setup-msys2@v2
+      with:
+        msystem: MSYS
+        path-type: inherit
+        update: false
+        install: >-
+          make cmake jq zip unzip p7zip curl git patch perl tar diffutils
+    - uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: '1.88.0'
+    - uses: arduino/setup-protoc@v3
+      with:
+        repo-token: ${{ github.token }}
+    - name: build
+      shell: msys2 {0}
+      env:
+        PROFILE: ${{ inputs.profile }}
+      run: |
+        # The MSVC bin dirs come in through path-type: inherit; build-env.sh
+        # reorders them ahead of /usr/bin so that MSYS2's `link` does not
+        # shadow the Microsoft linker.
+        source scripts/windows/build-env.sh
+        make "${PROFILE}-tgz"
+    - name: test ${{ inputs.profile }}
+      shell: msys2 {0}
+      env:
+        PROFILE: ${{ inputs.profile }}
+      run: |
+        source scripts/windows/build-env.sh
+        pkg="$(ls _packages/${PROFILE}/${PROFILE}-*.zip | head -1)"
+        unzip -q -d emqx-test "$pkg"
+        # the batch launcher is what Windows users actually run
+        ./emqx-test/bin/emqx.cmd start
+        for _ in $(seq 1 30); do
+          if ./emqx-test/bin/emqx_ctl.cmd status; then
+            break
+          fi
+          sleep 2
+        done
+        ./emqx-test/bin/emqx_ctl.cmd status
+        ./emqx-test/bin/emqx.cmd stop

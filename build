@@ -108,7 +108,21 @@ if [ "${SYSTEM}" = 'windows' ]; then
     # windows does not like the find
     FIND="/usr/bin/find"
     TAR="/usr/bin/tar"
-    export BUILD_WITHOUT_ROCKSDB="on"
+    # quicer's msquic build is not wired up for MSVC yet, so it is left out.
+    # RocksDB is built: erlang-rocksdb carries its own Windows CMake/MSBuild
+    # hooks, and scripts/windows/patch-native-deps.sh makes them fire.
+    export BUILD_WITHOUT_QUIC="on"
+    # jq runs its filters in an external port program (priv/jq_port) that is
+    # built by a bash/autotools script with no Windows path. Without it the
+    # jq application fails to start, which would take the whole node down, so
+    # the app is left out rather than shipped broken.
+    export BUILD_WITHOUT_JQ="on"
+    # bcrypt's NIF is POSIX-only (sys/queue.h, err.h, pthreads). It is listed
+    # in emqx_machine_boot's OPTIONAL_APPS, so the node boots without it; the
+    # bcrypt password_hash_algorithm is what becomes unavailable.
+    export BUILD_WITHOUT_BCRYPT="on"
+    # there is no prebuilt Windows quicer NIF to download
+    unset QUICER_DOWNLOAD_FROM_RELEASE
 else
     FIND='find'
     TAR='tar'

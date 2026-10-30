@@ -74,12 +74,11 @@ defmodule EMQX.MixProject do
         :lc,
         :hocon,
         :ranch,
-        :bcrypt,
         :emqx_http_lib,
         :typerefl,
         :snabbkaffe,
         :recon
-      ] ++ UMP.quicer_dep()
+      ] ++ UMP.quicer_dep() ++ UMP.bcrypt_dep()
     )
   end
 

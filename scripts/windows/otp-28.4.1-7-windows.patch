@@ -1,0 +1,52 @@
+diff --git a/erts/emulator/Makefile.in b/erts/emulator/Makefile.in
+index f39743f..c108d4d 100644
+--- a/erts/emulator/Makefile.in
++++ b/erts/emulator/Makefile.in
+@@ -1406,7 +1406,7 @@ DEP_CXX=$(CXX)
+ DEP_INCLUDES=$(INCLUDES) -I../etc/win32 \
+ 	-Idrivers/common -Idrivers/$(ERLANG_OSTYPE) \
+ 	-Inifs/common -Inifs/$(ERLANG_OSTYPE)
+-DEP_FLAGS=-MM  $(subst $(space)-O2$(space), $(GEN_OPT_FLGS) ,$(CFLAGS)) $(INCLUDES)	
++DEP_FLAGS=-MM  $(subst $(space)-O2$(space), $(GEN_OPT_FLGS) ,$(CFLAGS)) $(DEP_INCLUDES)	
+ DEP_CXXFLAGS=-MM $(subst $(space)-O2$(space), $(GEN_OPT_FLGS) ,$(CXXFLAGS)) $(DEP_INCLUDES) $(ASMJIT_FLAGS)
+ 
+ # ifeq ($(USING_VC),yes)
+diff --git a/erts/etc/win32/msys_tools/vc/cc.sh b/erts/etc/win32/msys_tools/vc/cc.sh
+index a8d7d27..e398018 100644
+--- a/erts/etc/win32/msys_tools/vc/cc.sh
++++ b/erts/etc/win32/msys_tools/vc/cc.sh
+@@ -160,6 +160,15 @@ while test -n "$1" ; do
+ 	-TP|-Tp)
+ 	    y=`echo $x | sed 's,",\\\",g'`;
+ 	    CMD="$CMD $y";;
++	-std=c++*|-std=gnu++*)
++	    # MSVC spells this /std:c++NN. Without a case here the option falls
++	    # through to the catch-all below, which hands it to the *linker*, so
++	    # cl.exe never sees a standard flag at all. /Zc:__cplusplus is
++	    # needed too: MSVC otherwise reports __cplusplus as 199711L, and
++	    # erts/configure probes C++17 by testing that value - when it fails
++	    # the JIT is silently disabled.
++	    y=`echo $x | sed 's,^-std=gnu++,/std:c++,;s,^-std=,/std:,'`;
++	    CMD="$CMD $y /Zc:__cplusplus";;
+ 	-l*)
+ 	    y=`echo $x | sed 's,^-l\(.*\),\1,g'`;
+ 	    LINKCMD="$LINKCMD $x";;
+diff --git a/erts/etc/win32/msys_tools/vc/ld.sh b/erts/etc/win32/msys_tools/vc/ld.sh
+index 29b1d1b..4290bff 100644
+--- a/erts/etc/win32/msys_tools/vc/ld.sh
++++ b/erts/etc/win32/msys_tools/vc/ld.sh
+@@ -40,7 +40,13 @@ while test -n "$1" ; do
+     case "$x" in
+ 	-dll| -DLL)
+ 	    BUILD_DLL=true;; 
+-	-L/*|-L.*)
++	# Also match a Windows drive path (-LC:/...): configure can emit one
++	# for a native library such as OpenSSL, and the original patterns only
++	# covered POSIX-absolute (-L/) and relative (-L.) paths. Anything else
++	# fell through to the catch-all below and reached link.exe as /LC:/...,
++	# which it reports as LNK4044 unrecognized option and ignores -- so the
++	# directory is silently dropped and the .lib then fails to open.
++	-L?*)
+ 	    y=`echo $x | sed 's,^-L\(.*\),\1,g'`;
+ 	    MPATH=`msys2win_path.sh -m $y`;
+ 	    CMD="$CMD -libpath:\"$MPATH\"";; 
